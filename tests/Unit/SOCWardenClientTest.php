@@ -1,0 +1,220 @@
+<?php
+
+namespace SOCWarden\Tests\Unit;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Orchestra\Testbench\TestCase;
+use SOCWarden\EventBuilder;
+use SOCWarden\SOCWardenClient;
+use SOCWarden\SOCWardenServiceProvider;
+
+class SOCWardenClientTest extends TestCase
+{
+    protected function getPackageProviders($app): array
+    {
+        return [SOCWardenServiceProvider::class];
+    }
+
+    /**
+     * Define environment setup so the service provider can boot without errors.
+     */
+    protected function defineEnvironment($app): void
+    {
+        $app['config']->set('socwarden-sdk.api_key', 'sk_test_abc123');
+        $app['config']->set('socwarden-sdk.endpoint', 'https://ingest.test');
+        $app['config']->set('socwarden-sdk.timeout', 5);
+        $app['config']->set('socwarden-sdk.auto_context', false);
+        $app['config']->set('socwarden-sdk.queue', false);
+        $app['config']->set('socwarden-sdk.listen_auth_events', false);
+    }
+
+    private function makeClient(array $overrides = []): SOCWardenClient
+    {
+        return new SOCWardenClient(
+            apiKey: $overrides['apiKey'] ?? 'sk_test_abc123',
+            endpoint: $overrides['endpoint'] ?? 'https://ingest.test',
+            timeout: $overrides['timeout'] ?? 5,
+            autoContext: $overrides['autoContext'] ?? false,
+            useQueue: $overrides['useQueue'] ?? false,
+            queueConnection: $overrides['queueConnection'] ?? null,
+            queueName: $overrides['queueName'] ?? 'default',
+            browserContextHeader: $overrides['browserContextHeader'] ?? 'X-SOCWarden-Context',
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    //  1. test_track_builds_correct_payload
+    // -------------------------------------------------------------------------
+
+    public function test_track_builds_correct_payload(): void
+    {
+        Http::fake([
+            'ingest.test/v1/events' => Http::response(['ok' => true], 202),
+        ]);
+
+        $client = $this->makeClient();
+        $client->track(
+            'auth.login.success',
+            actor: 'user_1',
+            actorEmail: 'test@example.com',
+        );
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return $request->url() === 'https://ingest.test/v1/events'
+                && $body['event'] === 'auth.login.success'
+                && $body['source'] === 'sdk'
+                && $body['actor_id'] === 'user_1'
+                && $body['actor_email'] === 'test@example.com';
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    //  2. test_track_data_passes_raw_array
+    // -------------------------------------------------------------------------
+
+    public function test_track_data_passes_raw_array(): void
+    {
+        Http::fake([
+            'ingest.test/v1/events' => Http::response(['ok' => true], 202),
+        ]);
+
+        $client = $this->makeClient();
+        $client->trackData('auth.login', ['actor_id' => 'u1']);
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return $body['event'] === 'auth.login'
+                && $body['source'] === 'sdk'
+                && $body['actor_id'] === 'u1';
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    //  3. test_event_builder_chain
+    // -------------------------------------------------------------------------
+
+    public function test_event_builder_chain(): void
+    {
+        $result = (new EventBuilder('x'))
+            ->actor('u1')
+            ->actorEmail('e@example.com')
+            ->meta('k', 'v')
+            ->toArray();
+
+        $this->assertSame('x', $result['event']);
+        $this->assertSame('u1', $result['actor_id']);
+        $this->assertSame('e@example.com', $result['actor_email']);
+        $this->assertSame(['k' => 'v'], $result['metadata']);
+    }
+
+    // -------------------------------------------------------------------------
+    //  4. test_event_builder_send_calls_track_data
+    // -------------------------------------------------------------------------
+
+    public function test_event_builder_send_calls_track_data(): void
+    {
+        Http::fake([
+            'ingest.test/v1/events' => Http::response(['ok' => true], 202),
+        ]);
+
+        // Register our client in the container so EventBuilder::send() resolves it.
+        $client = $this->makeClient();
+        $this->app->instance(SOCWardenClient::class, $client);
+
+        (new EventBuilder('auth.logout'))
+            ->actor('u99')
+            ->meta('reason', 'manual')
+            ->send();
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return $body['event'] === 'auth.logout'
+                && $body['actor_id'] === 'u99'
+                && $body['metadata']['reason'] === 'manual';
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    //  5. test_sanitize_query_string
+    // -------------------------------------------------------------------------
+
+    public function test_sanitize_query_string(): void
+    {
+        // sanitizeQueryString is private, so we use reflection to test it.
+        $client = $this->makeClient();
+        $method = new \ReflectionMethod($client, 'sanitizeQueryString');
+        $method->setAccessible(true);
+
+        // Sensitive parameter is redacted, non-sensitive is kept.
+        $result = $method->invoke($client, 'token=abc&name=test');
+        $this->assertSame('token=[REDACTED]&name=test', $result);
+
+        // Multiple sensitive params.
+        $result = $method->invoke($client, 'password=secret&key=123&page=1');
+        $this->assertSame('password=[REDACTED]&key=[REDACTED]&page=1', $result);
+
+        // Empty string stays empty.
+        $result = $method->invoke($client, '');
+        $this->assertSame('', $result);
+
+        // Case-insensitive sensitive detection (paramName is lowercased).
+        $result = $method->invoke($client, 'AUTH_TOKEN=xyz&foo=bar');
+        $this->assertSame('AUTH_TOKEN=[REDACTED]&foo=bar', $result);
+    }
+
+    // -------------------------------------------------------------------------
+    //  6. test_429_backoff_sets_cache
+    // -------------------------------------------------------------------------
+
+    public function test_429_backoff_sets_cache(): void
+    {
+        Http::fake([
+            'ingest.test/v1/events' => Http::response('Too Many Requests', 429, [
+                'Retry-After' => '600',
+            ]),
+        ]);
+
+        Log::shouldReceive('warning')->atLeast()->once();
+
+        $client = $this->makeClient();
+        $client->trackData('auth.login', ['actor_id' => 'u1']);
+
+        // The send method should have written a backoff cache key.
+        $this->assertNotNull(Cache::get('socwarden:quota_backoff_until'));
+    }
+
+    // -------------------------------------------------------------------------
+    //  7. test_resolve_named_args_with_model
+    // -------------------------------------------------------------------------
+
+    public function test_resolve_named_args_with_model(): void
+    {
+        Http::fake([
+            'ingest.test/v1/events' => Http::response(['ok' => true], 202),
+        ]);
+
+        // Use a concrete Model subclass with attributes set so Eloquent's __get
+        // returns the email properly.
+        $model = new class extends Model {
+            protected $guarded = [];
+        };
+        $model->forceFill(['id' => 42, 'email' => 'model@example.com']);
+
+        $client = $this->makeClient();
+        $client->track('auth.login.success', actor: $model);
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return $body['actor_id'] === '42'
+                && ($body['actor_email'] ?? null) === 'model@example.com';
+        });
+    }
+}

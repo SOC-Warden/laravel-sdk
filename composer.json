@@ -1,0 +1,49 @@
+{
+    "name": "soc-warden/laravel-sdk",
+    "description": "SOCWarden security observability SDK for Laravel — detect brute force, impossible travel, credential spray, and more from one API call.",
+    "type": "library",
+    "license": "MIT",
+    "homepage": "https://socwarden.io",
+    "keywords": ["security", "observability", "laravel", "siem", "threat-detection", "socwarden"],
+    "authors": [
+        {
+            "name": "SOCWarden",
+            "homepage": "https://socwarden.io"
+        }
+    ],
+    "scripts": {
+        "test": "phpunit"
+    },
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/http": "^11.0|^12.0",
+        "guzzlehttp/guzzle": "^7.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0",
+        "orchestra/testbench": "^9.0|^10.0",
+        "mockery/mockery": "^1.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "SOCWarden\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "SOCWarden\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "SOCWarden\\SOCWardenServiceProvider"
+            ],
+            "aliases": {
+                "SOCWarden": "SOCWarden\\Facades\\SOCWarden"
+            }
+        }
+    },
+    "minimum-stability": "stable"
+}
