@@ -122,7 +122,10 @@ class SOCWardenClient
             $data['actor_email'] = $actorEmail;
         }
         if ($ip !== null) {
-            $data['ip'] = $ip;
+            $sanitized = $this->sanitizeIP($ip);
+            if ($sanitized !== null) {
+                $data['ip'] = $sanitized;
+            }
         }
         if ($userAgent !== null) {
             $data['user_agent'] = $userAgent;
@@ -229,6 +232,14 @@ class SOCWardenClient
         }
 
         return $context;
+    }
+
+    private function sanitizeIP(?string $ip): ?string
+    {
+        if ($ip === null) {
+            return null;
+        }
+        return filter_var($ip, FILTER_VALIDATE_IP) !== false ? $ip : null;
     }
 
     private function sanitizeQueryString(string $qs): string

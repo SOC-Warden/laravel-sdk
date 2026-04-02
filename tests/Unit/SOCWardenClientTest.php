@@ -194,6 +194,49 @@ class SOCWardenClientTest extends TestCase
     //  7. test_resolve_named_args_with_model
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    //  8. test_invalid_ip_is_stripped
+    // -------------------------------------------------------------------------
+
+    public function test_invalid_ip_is_stripped(): void
+    {
+        Http::fake([
+            'ingest.test/v1/events' => Http::response(['ok' => true], 202),
+        ]);
+
+        $client = $this->makeClient();
+        $client->track('auth.login.success', ip: 'not-an-ip');
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+            $this->assertArrayNotHasKey('ip', $body);
+            return true;
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    //  9. test_valid_ip_is_kept
+    // -------------------------------------------------------------------------
+
+    public function test_valid_ip_is_kept(): void
+    {
+        Http::fake([
+            'ingest.test/v1/events' => Http::response(['ok' => true], 202),
+        ]);
+
+        $client = $this->makeClient();
+        $client->track('auth.login.success', ip: '192.168.0.1');
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+            $this->assertSame('192.168.0.1', $body['ip']);
+            return true;
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    //  (original 7)
+
     public function test_resolve_named_args_with_model(): void
     {
         Http::fake([
