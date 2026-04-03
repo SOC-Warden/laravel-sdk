@@ -27,7 +27,17 @@ class SOCWardenClient
         private ?string $queueConnection,
         private string $queueName,
         private string $browserContextHeader,
-    ) {}
+    ) {
+        // D2 FIX: Enforce HTTPS to prevent API key transmission in cleartext.
+        if (str_starts_with($this->endpoint, 'http://')) {
+            if (app()->environment('production')) {
+                throw new \InvalidArgumentException(
+                    '[SOCWarden] Endpoint must use HTTPS in production. API keys must not be transmitted in cleartext.'
+                );
+            }
+            Log::warning('[SOCWarden] WARNING: Endpoint is using HTTP. API keys will be transmitted in cleartext.');
+        }
+    }
 
     /**
      * Start building an event with the fluent API.
@@ -157,6 +167,12 @@ class SOCWardenClient
 
     private function dispatch(string $event, array $data): void
     {
+        // D3 FIX: Validate event_type format before sending to the ingestor.
+        if (! $this->isValidEventType($event)) {
+            Log::warning('[SOCWarden] Invalid event type format, dropping event.', ['event' => $event]);
+            return;
+        }
+
         $payload = $this->buildPayload($event, $data);
 
         if ($this->useQueue) {
@@ -221,17 +237,21 @@ class SOCWardenClient
                 'request_id' => $request->header('X-Request-ID') ?? $request->header('X-Correlation-ID'),
             ];
 
-            $browserContext = $request->header($this->browserContextHeader);
-            if ($browserContext) {
-                $base64Decoded = base64_decode($browserContext, true);
-                $decoded = $base64Decoded ? json_decode($base64Decoded, true) : json_decode($browserContext, true);
-                if (is_array($decoded)) {
-                    $context = array_merge($context, $decoded);
-                }
-            }
+            // D1 FIX: X-SOCWarden-Context header removed — trusting arbitrary HTTP headers
+            // allows any client to spoof server-side metadata. Server context is collected
+            // locally by the SDK at initialization and must not be merged from request headers.
         }
 
         return $context;
+    }
+
+    /**
+     * Validate the event type against the ingestor's required format.
+     * Pattern: ^[a-z][a-z0-9]{0,29}(\.[a-z][a-z0-9_]{0,29}){1,3}$
+     */
+    private function isValidEventType(string $event): bool
+    {
+        return (bool) preg_match('/^[a-z][a-z0-9]{0,29}(\.[a-z][a-z0-9_]{0,29}){1,3}$/', $event);
     }
 
     private function sanitizeIP(?string $ip): ?string
