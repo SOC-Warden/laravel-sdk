@@ -3,12 +3,12 @@
     "description": "SOCWarden security observability SDK for Laravel — detect brute force, impossible travel, credential spray, and more from one API call.",
     "type": "library",
     "license": "MIT",
-    "homepage": "https://socwarden.io",
+    "homepage": "https://socwarden.com",
     "keywords": ["security", "observability", "laravel", "siem", "threat-detection", "socwarden"],
     "authors": [
         {
             "name": "SOCWarden",
-            "homepage": "https://socwarden.io"
+            "homepage": "https://socwarden.com"
         }
     ],
     "scripts": {

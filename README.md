@@ -59,7 +59,7 @@ SOCWARDEN_LISTEN_AUTH=false
 | Variable | Default | Description |
 |---|---|---|
 | `SOCWARDEN_API_KEY` | — | Your SOCWarden API key |
-| `SOCWARDEN_ENDPOINT` | `https://ingest.socwarden.io` | Ingestor endpoint |
+| `SOCWARDEN_ENDPOINT` | `https://ingest.socwarden.com` | Ingestor endpoint |
 | `SOCWARDEN_AUTO_CONTEXT` | `true` | Auto-collect request context |
 | `SOCWARDEN_QUEUE` | `true` | Dispatch events via queue |
 | `SOCWARDEN_QUEUE_CONNECTION` | `null` | Queue connection name |
