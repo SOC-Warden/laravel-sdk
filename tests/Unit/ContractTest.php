@@ -54,7 +54,6 @@ class ContractTest extends TestCase
             useQueue: $overrides['useQueue'] ?? false,
             queueConnection: $overrides['queueConnection'] ?? null,
             queueName: $overrides['queueName'] ?? 'default',
-            browserContextHeader: $overrides['browserContextHeader'] ?? 'X-SOCWarden-Context',
         );
     }
 

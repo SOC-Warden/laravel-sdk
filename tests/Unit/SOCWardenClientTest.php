@@ -41,7 +41,6 @@ class SOCWardenClientTest extends TestCase
             useQueue: $overrides['useQueue'] ?? false,
             queueConnection: $overrides['queueConnection'] ?? null,
             queueName: $overrides['queueName'] ?? 'default',
-            browserContextHeader: $overrides['browserContextHeader'] ?? 'X-SOCWarden-Context',
         );
     }
 
@@ -407,5 +406,87 @@ class SOCWardenClientTest extends TestCase
 
         $this->assertNotNull($loggedBody);
         $this->assertLessThanOrEqual(200, mb_strlen($loggedBody));
+    }
+
+    // -------------------------------------------------------------------------
+    //  Security: CRLF injection stripped from user_agent and actor_email
+    // -------------------------------------------------------------------------
+
+    public function test_crlf_newlines_stripped_from_user_agent(): void
+    {
+        Http::fake([
+            'ingest.test/v1/events' => Http::response(['ok' => true], 202),
+        ]);
+
+        $client = $this->makeClient();
+        $client->track('auth.login.success', userAgent: "Mozilla/5.0\r\nX-Injected: header");
+
+        Http::assertSent(function ($request) {
+            $ua = $request->data()['user_agent'] ?? '';
+            $this->assertStringNotContainsString("\r", $ua);
+            $this->assertStringNotContainsString("\n", $ua);
+
+            return true;
+        });
+    }
+
+    public function test_crlf_newlines_stripped_from_actor_email(): void
+    {
+        Http::fake([
+            'ingest.test/v1/events' => Http::response(['ok' => true], 202),
+        ]);
+
+        $client = $this->makeClient();
+        $client->track('auth.login.success', actorEmail: "alice@example.com\r\nBcc: evil@attacker.com");
+
+        Http::assertSent(function ($request) {
+            $email = $request->data()['actor_email'] ?? '';
+            $this->assertStringNotContainsString("\r", $email);
+            $this->assertStringNotContainsString("\n", $email);
+
+            return true;
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    //  Security: unsupported URL schemes rejected at construction
+    // -------------------------------------------------------------------------
+
+    public function test_ftp_scheme_endpoint_throws_at_construction(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/scheme.*ftp.*not allowed/i');
+
+        new SOCWardenClient(
+            apiKey: 'sk_test_abc123',
+            endpoint: 'ftp://attacker.internal/v1/events',
+            timeout: 5,
+            autoContext: false,
+            useQueue: false,
+            queueConnection: null,
+            queueName: 'default',
+        );
+    }
+
+    public function test_empty_api_key_logs_warning(): void
+    {
+        Log::shouldReceive('warning')
+            ->atLeast()->once()
+            ->withArgs(fn (string $msg) => str_contains($msg, 'API key is empty'));
+
+        // Also allow the SSRF guard warning that fires for the https://ingest.test
+        // hostname resolution in the test environment (environment is 'testing' so
+        // the guard is skipped, but the empty-key warning must still fire).
+        Log::shouldReceive('warning')->zeroOrMoreTimes();
+
+        new SOCWardenClient(
+            apiKey: '',
+            endpoint: 'https://ingest.test',
+            timeout: 5,
+            autoContext: false,
+            useQueue: false,
+            queueConnection: null,
+            queueName: 'default',
+        );
     }
 }

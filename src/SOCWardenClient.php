@@ -29,10 +29,25 @@ class SOCWardenClient
         private bool $useQueue,
         private ?string $queueConnection,
         private string $queueName,
-        private string $browserContextHeader,
     ) {
-        // D2 FIX: Enforce HTTPS to prevent API key transmission in cleartext.
-        if (str_starts_with($this->endpoint, 'http://')) {
+        // Guard: warn loudly if the API key is empty so misconfigured deployments
+        // are caught at boot rather than silently sending unauthenticated requests.
+        if (trim($this->apiKey) === '') {
+            Log::warning('[SOCWarden] API key is empty. Events will be sent without authentication.');
+        }
+
+        // Scheme validation: only HTTPS (and HTTP in non-production with a loud warning)
+        // are accepted. Other schemes (ftp://, file://, javascript://, etc.) are blocked
+        // outright because they bypass the TLS check and could expose the API key.
+        $scheme = strtolower(parse_url($this->endpoint, PHP_URL_SCHEME) ?? '');
+
+        if ($scheme !== 'https' && $scheme !== 'http') {
+            throw new \InvalidArgumentException(
+                "[SOCWarden] Endpoint scheme '{$scheme}' is not allowed. Only HTTPS is supported."
+            );
+        }
+
+        if ($scheme === 'http') {
             if (app()->environment('production')) {
                 throw new \InvalidArgumentException(
                     '[SOCWarden] Endpoint must use HTTPS in production. API keys must not be transmitted in cleartext.'
@@ -127,7 +142,8 @@ class SOCWardenClient
         // Actor: model auto-reads id + email; string is just id
         if ($actor instanceof Model) {
             $data['actor_id'] = (string) $actor->getKey();
-            $data['actor_email'] = $actor->email ?? null;
+            // Sanitize email from model to prevent CRLF injection
+            $data['actor_email'] = $this->sanitizeNewlines($actor->email ?? null);
         } elseif (is_string($actor)) {
             $data['actor_id'] = $actor;
         }
@@ -137,7 +153,8 @@ class SOCWardenClient
             $data['actor_id'] = $actorId;
         }
         if ($actorEmail !== null) {
-            $data['actor_email'] = $actorEmail;
+            // Sanitize user-supplied email to prevent CRLF log injection
+            $data['actor_email'] = $this->sanitizeNewlines($actorEmail);
         }
         if ($ip !== null) {
             $sanitized = $this->sanitizeIP($ip);
@@ -146,7 +163,8 @@ class SOCWardenClient
             }
         }
         if ($userAgent !== null) {
-            $data['user_agent'] = $userAgent;
+            // Sanitize user-agent to prevent CRLF log injection
+            $data['user_agent'] = $this->sanitizeNewlines($userAgent);
         }
         if ($metadata !== null) {
             $data['metadata'] = $metadata;
@@ -310,7 +328,22 @@ class SOCWardenClient
         if ($ip === null) {
             return null;
         }
+
         return filter_var($ip, FILTER_VALIDATE_IP) !== false ? $ip : null;
+    }
+
+    /**
+     * Strip CR and LF characters from a string to prevent CRLF log-injection.
+     * User-agent and actor_email are user-controlled and may contain newlines
+     * that would corrupt structured log files or inject false log entries.
+     */
+    private function sanitizeNewlines(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        return str_replace(["\r", "\n"], ' ', $value);
     }
 
     private function sanitizeQueryString(string $qs): string
@@ -361,9 +394,22 @@ class SOCWardenClient
         }
 
         // Resolve the hostname to an IP for range checking.
-        $ip = filter_var($host, FILTER_VALIDATE_IP) !== false
-            ? $host
-            : gethostbyname($host);
+        // gethostbyname() returns the original hostname unchanged on DNS failure.
+        // If it still looks non-IP after resolution we must fail-closed (block),
+        // not fail-open (allow), to prevent SSRF via unresolvable/DNS-rebinding hostnames.
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            $ip = $host;
+        } else {
+            $resolved = gethostbyname($host);
+            if ($resolved === $host) {
+                // DNS resolution failed — the hostname did not resolve to an IP.
+                // Fail closed: reject the endpoint rather than silently allowing it.
+                throw new \InvalidArgumentException(
+                    "[SOCWarden] Endpoint hostname '{$host}' could not be resolved. SSRF guard requires a resolvable hostname."
+                );
+            }
+            $ip = $resolved;
+        }
 
         // Disallow private, loopback, link-local, and cloud-metadata ranges.
         $blockedRanges = [

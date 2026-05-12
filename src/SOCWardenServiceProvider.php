@@ -19,7 +19,6 @@ class SOCWardenServiceProvider extends ServiceProvider
                 useQueue: config('socwarden-sdk.queue', true),
                 queueConnection: config('socwarden-sdk.queue_connection'),
                 queueName: config('socwarden-sdk.queue_name', 'default'),
-                browserContextHeader: config('socwarden-sdk.browser_context_header', 'X-SOCWarden-Context'),
             );
         });
     }
