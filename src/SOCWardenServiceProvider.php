@@ -13,7 +13,7 @@ class SOCWardenServiceProvider extends ServiceProvider
         $this->app->singleton(SOCWardenClient::class, function ($app) {
             return new SOCWardenClient(
                 apiKey: config('socwarden-sdk.api_key', ''),
-                endpoint: config('socwarden-sdk.endpoint', 'https://ingest.socwarden.io'),
+                endpoint: config('socwarden-sdk.endpoint', 'https://ingest.socwarden.com'),
                 timeout: config('socwarden-sdk.timeout', 5),
                 autoContext: config('socwarden-sdk.auto_context', true),
                 useQueue: config('socwarden-sdk.queue', true),
