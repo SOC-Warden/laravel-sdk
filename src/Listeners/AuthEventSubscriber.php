@@ -21,6 +21,8 @@ class AuthEventSubscriber
 
     public function handleFailed(Failed $event): void
     {
+        // Only the email is extracted from credentials — the password is intentionally
+        // excluded to prevent plaintext credentials from being forwarded to the ingestor.
         $this->client->track('auth.login.failure', actorEmail: $event->credentials['email'] ?? null);
     }
 

@@ -5,7 +5,7 @@ return [
     'api_key' => env('SOCWARDEN_API_KEY'),
 
     // Ingestor endpoint
-    'endpoint' => env('SOCWARDEN_ENDPOINT', 'https://ingest.socwarden.com'),
+    'endpoint' => env('SOCWARDEN_ENDPOINT', 'https://ingestor.socwarden.com'),
 
     // Automatically collect request context (method, path, referer, server info)
     'auto_context' => env('SOCWARDEN_AUTO_CONTEXT', true),
